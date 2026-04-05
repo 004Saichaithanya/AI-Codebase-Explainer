@@ -7,6 +7,7 @@ from ingest import load_documents_from_directory, build_vector_store
 from retriever import get_qa_chain
 from utils import clone_github_repo, cleanup_temp_dir
 from dotenv import load_dotenv
+from st_copy_to_clipboard import st_copy_to_clipboard
 
 # Load environment variables
 load_dotenv()
@@ -25,21 +26,18 @@ if 'chat_history' not in st.session_state:
 if 'temp_repo_dir' not in st.session_state:
     st.session_state.temp_repo_dir = None
 
-# --- Sidebar ---
-st.sidebar.header("Configuration")
-if not google_api_key:
-    st.sidebar.error("❌ GOOGLE_API_KEY not found in .env file. Please add it to secure the app.")
-else:
-    st.sidebar.success("✅ Secure API Key loaded from .env")
 
-st.sidebar.subheader("Load Codebase")
-source_type = st.sidebar.radio("Source Type", ["GitHub Repository", "Upload Zip File"])
+# --- Sidebar ---
+st.sidebar.header("📂 Load Codebase")
+source_type = st.sidebar.radio("Select source:", ["GitHub Repository", "Upload Zip File"], label_visibility="collapsed")
 
 def clear_chat():
     st.session_state.chat_history = []
 
-def process_directory(directory_path, api_key):
-    with st.spinner("Loading codebase..."):
+# main.py (Excerpt to replace)
+
+def process_directory(directory_path, api_key, identifier):
+    with st.spinner(f"Loading codebase... (This may take a moment to respect API rate limits)"):
         try:
             docs = load_documents_from_directory(directory_path)
             if not docs:
@@ -48,8 +46,8 @@ def process_directory(directory_path, api_key):
                 
             st.info(f"Loaded {len(docs)} valid files. Generating embeddings...")
             
-            # Build vector store
-            st.session_state.vector_store = build_vector_store(docs, api_key)
+            # Pass the identifier to build_vector_store for caching
+            st.session_state.vector_store = build_vector_store(docs, api_key, identifier)
             clear_chat()
             return True
         except Exception as e:
@@ -59,52 +57,61 @@ def process_directory(directory_path, api_key):
 if source_type == "GitHub Repository":
     repo_url = st.sidebar.text_input("GitHub Repo URL", placeholder="https://github.com/user/repo")
     if st.sidebar.button("Fetch and Index", use_container_width=True):
-        if not google_api_key:
-            st.sidebar.error("API key is missing.")
-        elif not repo_url:
-            st.sidebar.error("Please enter a valid GitHub URL.")
-        else:
-            with st.spinner("Cloning repository..."):
-                try:
-                    if st.session_state.temp_repo_dir:
-                        cleanup_temp_dir(st.session_state.temp_repo_dir)
-                    
-                    temp_dir = clone_github_repo(repo_url)
-                    st.session_state.temp_repo_dir = temp_dir
-                    
-                    if process_directory(temp_dir, google_api_key):
-                        st.sidebar.success("Repository indexed successfully!")
-                except Exception as e:
-                    st.sidebar.error(str(e))
+        # ... validation checks ...
+        with st.spinner("Cloning repository..."):
+            try:
+                if st.session_state.temp_repo_dir:
+                    cleanup_temp_dir(st.session_state.temp_repo_dir)
+                
+                temp_dir = clone_github_repo(repo_url)
+                st.session_state.temp_repo_dir = temp_dir
+                
+                # Pass repo_url as the identifier
+                if process_directory(temp_dir, google_api_key, repo_url):
+                    st.sidebar.success("Repository indexed successfully!")
+            except Exception as e:
+                st.sidebar.error(str(e))
 
 elif source_type == "Upload Zip File":
     uploaded_file = st.sidebar.file_uploader("Upload Code Zip", type=["zip"])
     if st.sidebar.button("Extract and Index", use_container_width=True):
-        if not google_api_key:
-            st.sidebar.error("API key is missing.")
-        elif not uploaded_file:
-            st.sidebar.error("Please upload a file.")
-        else:
-            with st.spinner("Extracting..."):
-                try:
-                    if st.session_state.temp_repo_dir:
-                        cleanup_temp_dir(st.session_state.temp_repo_dir)
-                    
-                    temp_dir = tempfile.mkdtemp(prefix="ai_code_explainer_zip_")
-                    st.session_state.temp_repo_dir = temp_dir
-                    
-                    with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
-                        zip_ref.extractall(temp_dir)
-                        
-                    if process_directory(temp_dir, google_api_key):
-                        st.sidebar.success("Codebase indexed successfully!")
-                except Exception as e:
-                    st.sidebar.error(f"Failed to extract or index zip: {e}")
-
+        # ... validation checks ...
+        with st.spinner("Extracting..."):
+            try:
+                # ... extraction logic ...
+                # Pass the uploaded file name as the identifier
+                if process_directory(temp_dir, google_api_key, uploaded_file.name):
+                    st.sidebar.success("Codebase indexed successfully!")
+            except Exception as e:
+                st.sidebar.error(f"Failed to extract or index zip: {e}")
 # --- Main QA Section ---
 
 if st.session_state.vector_store is None:
-    st.info("👈 Please enter your Gemini API key and load a codebase from the sidebar to start asking questions.")
+    # --- New, cleaner Home Page UI ---
+    st.markdown("### 👋 Welcome to your AI Code Assistant!")
+    st.markdown(
+        "I'm ready to help you navigate, understand, and debug your code. "
+        "**Load a codebase from the sidebar to get started.**"
+    )
+    
+    st.divider()
+    
+    # Feature highlights using columns
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("#### 🔍 Deep Search")
+        st.write("Ask questions about complex logic, overall architecture, or track down bugs across the entire repository.")
+        
+    with col2:
+        st.markdown("#### 💡 Code Explainers")
+        st.write("Get plain-English explanations of undocumented functions, API routes, and complex algorithms.")
+        
+    with col3:
+        st.markdown("#### ⚡ Powered by Gemini")
+        st.write("Leveraging fast, high-context embeddings and LLMs to understand your project structure instantly.")
+        
+    st.divider()
 else:
     # Button to clear chat
     if st.button("Clear Chat History"):
@@ -112,9 +119,12 @@ else:
         st.rerun()
         
     # Display chat history
-    for chat in st.session_state.chat_history:
+    for i, chat in enumerate(st.session_state.chat_history):
         with st.chat_message(chat["role"]):
             st.markdown(chat["content"])
+            # Add a copy button specifically under the assistant's responses
+            if chat["role"] == "assistant":
+                st_copy_to_clipboard(text=chat["content"], before_copy_label="📋 Copy Response", key=f"copy_history_{i}")
             
     # Input box
     user_input = st.chat_input("Ask a question about the codebase...")
@@ -136,6 +146,10 @@ else:
                         
                         st.markdown(answer)
                         st.session_state.chat_history.append({"role": "assistant", "content": answer})
+                        
+                        # Add copy button for the newly generated response
+                        st_copy_to_clipboard(text=answer, before_copy_label="📋 Copy Response", key=f"copy_new_{len(st.session_state.chat_history)}")
+                        
                     except Exception as e:
                         error_msg = f"Error generating answer: {e}"
                         st.error(error_msg)
