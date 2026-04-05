@@ -6,3 +6,4 @@ gitpython
 python-dotenv
 langchain-text-splitters
 langchain-community
+st_copy_to_clipboard
